@@ -1,0 +1,1 @@
+python test.py -B 2 --log-dir-prefix tess/ss.patch/eval_b30/ --val-dir /home/ubuntu/lol/eval15/ -w -g 0 --init-model-file tess/ss.patch/model/epoch_30.pth
