@@ -11,38 +11,46 @@ from data.vectornet import PathDataset, OverlapDataset
 
 from model.vectornet import PathNet
 
+from metrics.raster import iou
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import torch.nn as nn
+
 def _make_gird(img, pred, trg):
     save_input = img[0,0]
     save_input[img[0,1] == 1.0] = 0
     save_input = save_input.unsqueeze(0)
     img_grid = torchvision.utils.make_grid([save_input, pred[0], trg[0]])
     return img_grid
-def validate(loader, model, logger, log_i, metric_fn, writer):
+def validate(loader, model, logger, log_i, metric_fns, writer):
     # Model to eval
+    metric_result = [0] * len(metric_fns)
     model.eval()
     if torch.cuda.is_available():
         device = 'cuda'
     else:
         device = 'cpu'
     logger.info('Validating')
-    result = 0
     for batch_j, batch_data_val in enumerate(loader):
         x, y, _ = batch_data_val
         x = x.to(device)
         y = y.to(device)
         with torch.no_grad():
-            y_pred = model.forward(x) 
-        result += metric_fn(y_pred, y)
-    writer.add_scalar("validation_loss", result / len(loader), global_step=log_i)
+            y_pred = model(x)
+            y_pred = torch.clamp(y_pred, 0, 1)
+        for i in range(len(metric_fns)):
+            metric = metric_fns[i][0]
+            metric_result[i] += metric(y_pred, y)
+    for i in range(len(metric_fns)):
+        writer.add_scalar(metric_fns[i][1], metric_result[i] / len(loader), global_step=log_i)
     img_grid = _make_gird(x, y_pred, y)
     writer.add_image('validate_output', img_grid, global_step=log_i)
-    return result / len(loader)
+    torchvision.utils.save_image(img_grid, "debug2.png")
+    return metric_result[-1] / len(loader)
 def main(options):
     torch.autograd.set_detect_anomaly(False)
     logs_dir = options.logs_dir
@@ -87,14 +95,15 @@ def main(options):
     #***************#
     logger.info_trainable_params(model)
     if options.init_model_filename:
-        load_model(cp_dict, optimizer)
+        load_model(options.init_model_filename, cp_dict)
     #***************#
     if options.loss == 'l1':
-        criterion = nn.L1Loss(reduce='mean')
+        criterion = nn.L1Loss(reduction='mean')
     else:
-        criterion = nn.MSELoss(reduce='mean')
+        criterion = nn.MSELoss(reduction='mean')
     #***************#
     best_val_loss = 1000
+    metrics = [[criterion, "l1"], [iou, "iou"]]
     for epoch_i in range(options.epochs):
         logger.info('Training batch {}'.format(epoch_i))
         epoch_loss = 0
@@ -107,6 +116,7 @@ def main(options):
             trg = trg.to(device)
             # global discriminator
             pred = model(img)
+            pred = torch.clamp(pred, 0, 1)
             loss = criterion(pred, trg)
             loss.backward()
             epoch_loss += loss.item()
@@ -114,11 +124,12 @@ def main(options):
 
         logger.info(
             'loss : {loss_G:.4f}'.format(loss_G=epoch_loss/len(train_loader)))
-        writer.add_scalar("train_loss", epoch_loss / len(loader), global_step=epoch_i)
+        writer.add_scalar("train_loss", epoch_loss / len(train_loader), global_step=epoch_i)
         logger.info('Time  {}'.format(time() - start_time))
         img_grid = _make_gird(img, pred, trg)
         writer.add_image('train_output', img_grid, global_step=epoch_i)
-        val_loss = validate(val_loader, model, logger, epoch_i, criterion, writer)
+        
+        val_loss = validate(val_loader, model, logger, epoch_i, metrics, writer)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_model(os.path.join(save_model_filename, 'best.pth'), cp_dict)
