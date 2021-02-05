@@ -4,7 +4,7 @@ class PathNet(nn.Module):
     """
     VDSR
     """
-    def __init__(self, repeat_num, hidden_channel, k=3, s=1, p=1):
+    def __init__(self, repeat_num, hidden_channel, last_activation='relu', k=3, s=1, p=1):
         super(PathNet, self).__init__()
         first_layer = [nn.Conv2d(2, hidden_channel, kernel_size=k, stride=s, padding=p),
                  nn.ReLU(),
@@ -13,8 +13,12 @@ class PathNet(nn.Module):
             mid_layer = [nn.Conv2d(hidden_channel, hidden_channel, kernel_size=k, stride=s, padding=p),
                  nn.ReLU(),
                  nn.BatchNorm2d(hidden_channel)] * (repeat_num - 2)
-        last_layer = [nn.Conv2d(hidden_channel, 1, kernel_size=k, stride=s, padding=p),
-                 nn.ReLU()]
+        if last_activation == 'relu':
+            last_layer = [nn.Conv2d(hidden_channel, 1, kernel_size=k, stride=s, padding=p),
+                        nn.ReLU()]
+        else:
+            last_layer = [nn.Conv2d(hidden_channel, 1, kernel_size=k, stride=s, padding=p),
+                 nn.Sigmoid()]
         if repeat_num > 2:
             layers = first_layer + mid_layer + last_layer
         else:
