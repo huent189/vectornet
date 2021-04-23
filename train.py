@@ -21,10 +21,15 @@ import torchvision
 import torch.nn as nn
 
 def _make_gird(img, pred, trg):
-    save_input = img[0,0]
-    save_input[img[0,1] == 1.0] = 0
-    save_input = save_input.unsqueeze(0)
-    img_grid = torchvision.utils.make_grid([save_input, pred[0], trg[0]])
+    if img.shape[1] == 2:
+        save_input = img[0,0]
+        save_input[img[0,1] == 1.0] = 0
+        save_input = save_input.unsqueeze(0)
+    else:
+        save_input = img[0]
+    in_im = torch.cat([save_input] * 3, dim=0)
+    pred_trg = torch.cat([save_input, pred[0], trg[0]])
+    img_grid = torchvision.utils.make_grid([in_im, pred_trg])
     return img_grid
 def validate(loader, model, logger, log_i, metric_fns, writer):
     # Model to eval
@@ -49,7 +54,6 @@ def validate(loader, model, logger, log_i, metric_fns, writer):
         writer.add_scalar(metric_fns[i][1], metric_result[i] / len(loader), global_step=log_i)
     img_grid = _make_gird(x, y_pred, y)
     writer.add_image('validate_output', img_grid, global_step=log_i)
-    torchvision.utils.save_image(img_grid, "debug2.png")
     return metric_result[-1] / len(loader)
 def main(options):
     torch.autograd.set_detect_anomaly(False)
@@ -77,8 +81,12 @@ def main(options):
     logger.info("Called with parameters: {}".format(options.__dict__))
     
     #***************#
-    train_data = PathDataset(options.train_dir, options.im_w, options.im_h)
-    val_data = PathDataset(options.val_dir, options.im_w, options.im_h)
+    if options.net == 'path':
+        train_data = PathDataset(options.train_dir, options.im_w, options.im_h)
+        val_data = PathDataset(options.val_dir, options.im_w, options.im_h)
+    else:
+        train_data = OverlapDataset(options.train_dir, options.im_w, options.im_h)
+        val_data = OverlapDataset(options.val_dir, options.im_w, options.im_h)
     train_loader = DataLoader(train_data, batch_size=options.train_batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_data, batch_size=options.val_batch_size, shuffle=True, num_workers=4)
     #***************#
@@ -87,11 +95,14 @@ def main(options):
     logger.info('Total number of val samples: ~{}'.format(len(val_loader) * options.val_batch_size))
 
     #***************#
-    if options.path:
-        model = PathNet(options.repeat_num, options.conv_hidden_num).to(device)
+    if options.net == 'path':
+        model = PathNet(options.repeat_num, options.conv_hidden_num, input_channel=2).to(device)
+    else:
+        model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=options.lr, weight_decay=options.weight_decay, betas=[0.5, 0.999])
-    cp_dict = {"model": model,
-                'optimizer': optimizer}
+    cp_dict = {"model": model
+                # 'optimizer': optimizer
+                }
     #***************#
     logger.info_trainable_params(model)
     if options.init_model_filename:
@@ -99,10 +110,13 @@ def main(options):
     #***************#
     if options.loss == 'l1':
         criterion = nn.L1Loss(reduction='mean')
+    elif options.loss == 'bce':
+        criterion = nn.BCELoss(reduction='mean')
     else:
         criterion = nn.MSELoss(reduction='mean')
+    
     #***************#
-    best_val_loss = 1000
+    best_val_loss = 0
     metrics = [[criterion, "l1"], [iou, "iou"]]
     for epoch_i in range(options.epochs):
         logger.info('Training batch {}'.format(epoch_i))
@@ -116,7 +130,7 @@ def main(options):
             trg = trg.to(device)
             # global discriminator
             pred = model(img)
-            pred = torch.clamp(pred, 0, 1)
+            # pred = torch.clamp(pred, 0, 1)
             loss = criterion(pred, trg)
             loss.backward()
             epoch_loss += loss.item()
@@ -130,7 +144,8 @@ def main(options):
         writer.add_image('train_output', img_grid, global_step=epoch_i)
         
         val_loss = validate(val_loader, model, logger, epoch_i, metrics, writer)
-        if val_loss < best_val_loss:
+        
+        if val_loss > best_val_loss:
             best_val_loss = val_loss
             save_model(os.path.join(save_model_filename, 'best.pth'), cp_dict)
         if (epoch_i % options.batches_before_save) == 0:
@@ -167,7 +182,7 @@ def parse_args():
                         help='If set, overwrite existing logs [default: exit if output dir exists].')
     parser.add_argument('--seed', type=int, default=256)
 
-    parser.add_argument('--path', action='store_true', help='train pathnet')
+    parser.add_argument('--net', type=str, help='type of net', choices=['path', 'overlap'])
     parser.add_argument('--im_w', type=str, help='image_width', default=64)
     parser.add_argument('--im_h', type=str, help='image_heigh', default=64)
     parser.add_argument('--conv_hidden_num', type=int, default=64,
@@ -175,7 +190,7 @@ def parse_args():
     parser.add_argument('--repeat_num', type=int, default=20,
                      choices=[16, 20, 32])
     parser.add_argument('--loss', type=str, default='l1',
-                     choices=['l1','l2'])
+                     choices=['l1','l2', 'bce'])
     options = parser.parse_args()
 
     return options

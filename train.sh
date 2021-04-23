@@ -1,1 +1,1 @@
-python train.py -e 100 -b 224 -B 224 --log-dir-prefix ss/test/ --batches_before_save 5 --train-dir /content/kanji/train/ --val-dir /content/kanji/val/ -w -g 0 --path
+python3 train.py -e 200 -b 224 -B 224 --log-dir-prefix ss/path/ --batches_before_save 10 --train-dir /content/kanji/train/ --val-dir /content/kanji/val/ -w -g 0 --net path --lr 0.0001 

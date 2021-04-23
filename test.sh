@@ -1,1 +1,1 @@
-python test.py -B 2 --log-dir-prefix tess/ss.patch/eval_b30/ --val-dir /home/ubuntu/lol/eval15/ -w -g 0 --init-model-file tess/ss.patch/model/epoch_30.pth
+python3 test.py -B 1 --log-dir-prefix ss/path.lr005/eval/ --path ss/path.lr005/model/epoch_50.pth --overlap ss/overlap.l2/model/epoch_60.pth --im 0912d.png -g 0
