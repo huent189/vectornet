@@ -100,6 +100,7 @@ def main(options):
     else:
         model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=options.lr, weight_decay=options.weight_decay, betas=[0.5, 0.999])
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 150, gamma=0.1)
     cp_dict = {"model": model
                 # 'optimizer': optimizer
                 }
@@ -117,7 +118,7 @@ def main(options):
     
     #***************#
     best_val_loss = 0
-    metrics = [[criterion, "l1"], [iou, "iou"]]
+    metrics = [[criterion, options.loss], [iou, "iou"]]
     for epoch_i in range(options.epochs):
         logger.info('Training batch {}'.format(epoch_i))
         epoch_loss = 0
@@ -135,6 +136,7 @@ def main(options):
             loss.backward()
             epoch_loss += loss.item()
             optimizer.step()
+            lr_scheduler.step()
 
         logger.info(
             'loss : {loss_G:.4f}'.format(loss_G=epoch_loss/len(train_loader)))
