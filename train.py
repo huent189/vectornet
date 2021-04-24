@@ -82,10 +82,10 @@ def main(options):
     
     #***************#
     if options.net == 'path':
-        train_data = PathDataset(options.train_dir, options.im_w, options.im_h)
+        train_data = PathDataset(options.train_dir, options.im_w, options.im_h, random_w=options.augment_stroke_width)
         val_data = PathDataset(options.val_dir, options.im_w, options.im_h)
     else:
-        train_data = OverlapDataset(options.train_dir, options.im_w, options.im_h)
+        train_data = OverlapDataset(options.train_dir, options.im_w, options.im_h, random_w=options.augment_stroke_width)
         val_data = OverlapDataset(options.val_dir, options.im_w, options.im_h)
     train_loader = DataLoader(train_data, batch_size=options.train_batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_data, batch_size=options.val_batch_size, shuffle=True, num_workers=4)
@@ -96,11 +96,12 @@ def main(options):
 
     #***************#
     if options.net == 'path':
-        model = PathNet(options.repeat_num, options.conv_hidden_num, input_channel=2).to(device)
+        # model = PathNet(options.repeat_num, options.conv_hidden_num, input_channel=2).to(device)
+        model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=2).to(device)
     else:
         model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=options.lr, weight_decay=options.weight_decay, betas=[0.5, 0.999])
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 150, gamma=0.1)
+    # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 150, gamma=0.1)
     cp_dict = {"model": model
                 # 'optimizer': optimizer
                 }
@@ -135,8 +136,9 @@ def main(options):
             loss = criterion(pred, trg)
             loss.backward()
             epoch_loss += loss.item()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), options.clip)
             optimizer.step()
-            lr_scheduler.step()
+            # lr_scheduler.step()
 
         logger.info(
             'loss : {loss_G:.4f}'.format(loss_G=epoch_loss/len(train_loader)))
@@ -176,6 +178,7 @@ def parse_args():
                         help='name of validation folder', type=str)
 
     parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--clip', type=float, default=0.1)
     parser.add_argument('--weight_decay', type=float, default=0.0001)
 
     parser.add_argument('--verbose', action='store_true', default=False, dest='verbose',
@@ -187,6 +190,7 @@ def parse_args():
     parser.add_argument('--net', type=str, help='type of net', choices=['path', 'overlap'])
     parser.add_argument('--im_w', type=str, help='image_width', default=64)
     parser.add_argument('--im_h', type=str, help='image_heigh', default=64)
+    parser.add_argument('--augment_stroke_width', action='store_true')
     parser.add_argument('--conv_hidden_num', type=int, default=64,
                      choices=[64, 128, 256])
     parser.add_argument('--repeat_num', type=int, default=20,

@@ -8,11 +8,12 @@ import glob
 import os
 import cv2
 class PathDataset(data.Dataset):
-    def __init__(self, path, h, w):
+    def __init__(self, path, h, w, random_w=False):
         super(PathDataset, self).__init__()
         self.paths = sorted(glob.glob(path + "*"))
         self.w = w
         self.h = h
+        self.random_w = random_w
     def _preprocess_path(self, file_path, w, h):
         """
         return: x_0: image 3rd channel
@@ -26,6 +27,9 @@ class PathDataset(data.Dataset):
         s = [1, 1]
         t = [0, 0]
         svg = svg.format(w=w, h=h, r=r, sx=s[0], sy=s[1], tx=t[0], ty=t[1])
+        if self.random_w:
+          s_w = np.random.randint(1, 6)
+          svg = svg.replace('stroke-width:3;', f'stroke-width:{s_w};')
         img = cairosvg.svg2png(bytestring=svg.encode('utf-8'))
         img = Image.open(io.BytesIO(img))
         s = np.array(img)[:,:,3].astype(np.float) # / 255.0
@@ -76,11 +80,13 @@ class PathDataset(data.Dataset):
         return len(self.paths)
 
 class OverlapDataset(data.Dataset):
-    def __init__(self, path, h, w):
-        super(OverlapDataset, self).__init__()
-        self.paths = sorted(glob.glob(os.path.join(path, "*")))
+    def __init__(self, path, h, w, random_w=False):
+        super(PathDataset, self).__init__()
+        self.paths = sorted(glob.glob(path + "*"))
         self.w = w
         self.h = h
+        self.random_w = random_w
+        
     def preprocess_overlap(self, file_path, w, h):
         """
         return x: image
@@ -94,6 +100,9 @@ class OverlapDataset(data.Dataset):
         t = [0, 0]
 
         svg = svg.format(w=w, h=h, r=r, sx=s[0], sy=s[1], tx=t[0], ty=t[1])
+        if self.random_w:
+            s_w = np.random.randint(1, 6)
+            svg = svg.replace('stroke-width:3;', f'stroke-width:{s_w};')
         img = cairosvg.svg2png(bytestring=svg.encode('utf-8'))
         img = Image.open(io.BytesIO(img))
         s = np.array(img)[:,:,3].astype(np.float) # / 255.0
