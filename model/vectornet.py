@@ -16,9 +16,11 @@ class PathNet(nn.Module):
                                         nn.BatchNorm2d(hidden_channel)) for _ in range(repeat_num - 2)]
         if last_activation == 'relu':
             last_layer = [nn.Conv2d(hidden_channel, 1, kernel_size=k, stride=s, padding=p),
+                          nn.BatchNorm2d(1),
                         nn.ReLU()]
         else:
             last_layer = [nn.Conv2d(hidden_channel, 1, kernel_size=k, stride=s, padding=p),
+                          nn.BatchNorm2d(1),
                  nn.Sigmoid()]
         if repeat_num > 2:
             layers = first_layer + mid_layer + last_layer
