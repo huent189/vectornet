@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 eval/*
-gco/*
+gco/build
 # C extensions
 *.so
 
@@ -121,3 +121,7 @@ dmypy.json
 ss*
 tess*
 tmp*
+nb.ipynb
+gco.zip
+vectored.zip
+vectored_half.zip
