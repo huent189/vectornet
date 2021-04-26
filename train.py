@@ -31,6 +31,7 @@ def _make_gird(img, pred, trg):
     pred_trg = torch.cat([save_input, pred[0], trg[0]])
     img_grid = torchvision.utils.make_grid([in_im, pred_trg])
     return img_grid
+
 def validate(loader, model, logger, log_i, metric_fns, writer):
     # Model to eval
     metric_result = [0] * len(metric_fns)
@@ -54,7 +55,8 @@ def validate(loader, model, logger, log_i, metric_fns, writer):
         writer.add_scalar(metric_fns[i][1], metric_result[i] / len(loader), global_step=log_i)
     img_grid = _make_gird(x, y_pred, y)
     writer.add_image('validate_output', img_grid, global_step=log_i)
-    return metric_result[-1] / len(loader)
+    return metric_result[-1] / len(loader), metric_result[0] / len(loader)
+
 def main(options):
     torch.autograd.set_detect_anomaly(False)
     logs_dir = options.logs_dir
@@ -82,10 +84,11 @@ def main(options):
     
     #***************#
     if options.net == 'path':
-        train_data = PathDataset(options.train_dir, options.im_w, options.im_h)
+        print(options.augment_gamma)
+        train_data = PathDataset(options.train_dir, options.im_w, options.im_h, random_w=options.augment_stroke_width, random_gamma=options.augment_gamma)
         val_data = PathDataset(options.val_dir, options.im_w, options.im_h)
     else:
-        train_data = OverlapDataset(options.train_dir, options.im_w, options.im_h)
+        train_data = OverlapDataset(options.train_dir, options.im_w, options.im_h, random_w=options.augment_stroke_width)
         val_data = OverlapDataset(options.val_dir, options.im_w, options.im_h)
     train_loader = DataLoader(train_data, batch_size=options.train_batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_data, batch_size=options.val_batch_size, shuffle=True, num_workers=4)
@@ -97,9 +100,13 @@ def main(options):
     #***************#
     if options.net == 'path':
         model = PathNet(options.repeat_num, options.conv_hidden_num, input_channel=2).to(device)
+        # model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=2).to(device)
     else:
         model = PathNet(options.repeat_num, options.conv_hidden_num, last_activation='sigmoid', input_channel=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=options.lr, weight_decay=options.weight_decay, betas=[0.5, 0.999])
+    # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 150, gamma=0.1)
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150,180], gamma=0.1)
+
     cp_dict = {"model": model
                 # 'optimizer': optimizer
                 }
@@ -116,8 +123,9 @@ def main(options):
         criterion = nn.MSELoss(reduction='mean')
     
     #***************#
-    best_val_loss = 0
-    metrics = [[criterion, "l1"], [iou, "iou"]]
+    best_val_loss = 100000000
+    best_val_iou = 0.0
+    metrics = [[criterion, options.loss], [iou, "iou"]]
     for epoch_i in range(options.epochs):
         logger.info('Training batch {}'.format(epoch_i))
         epoch_loss = 0
@@ -134,7 +142,9 @@ def main(options):
             loss = criterion(pred, trg)
             loss.backward()
             epoch_loss += loss.item()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), options.clip)
             optimizer.step()
+            lr_scheduler.step()
 
         logger.info(
             'loss : {loss_G:.4f}'.format(loss_G=epoch_loss/len(train_loader)))
@@ -143,13 +153,22 @@ def main(options):
         img_grid = _make_gird(img, pred, trg)
         writer.add_image('train_output', img_grid, global_step=epoch_i)
         
-        val_loss = validate(val_loader, model, logger, epoch_i, metrics, writer)
+        val_iou, val_loss = validate(val_loader, model, logger, epoch_i, metrics, writer)
+        logger.info(
+            'val loss : {loss_G:.4f}'.format(loss_G=val_loss))
+        logger.info(
+            'val iou : {loss_G:.4f}'.format(loss_G=val_iou))
         
-        if val_loss > best_val_loss:
+        if val_loss < best_val_loss:
             best_val_loss = val_loss
-            save_model(os.path.join(save_model_filename, 'best.pth'), cp_dict)
+            save_model(os.path.join(save_model_filename, 'best_loss.pth'), cp_dict)
+        if val_iou > best_val_iou:
+            best_val_iou = val_iou
+            save_model(os.path.join(save_model_filename, 'best_iou.pth'), cp_dict)
+                
         if (epoch_i % options.batches_before_save) == 0:
             save_model(os.path.join(save_model_filename, f'epoch_{epoch_i}.pth'), cp_dict)
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-g', '--gpu', action='append', help='GPU to use, can use multiple [default: use CPU].')
@@ -174,6 +193,7 @@ def parse_args():
                         help='name of validation folder', type=str)
 
     parser.add_argument('--lr', type=float, default=0.0001)
+    parser.add_argument('--clip', type=float, default=0.1)
     parser.add_argument('--weight_decay', type=float, default=0.0001)
 
     parser.add_argument('--verbose', action='store_true', default=False, dest='verbose',
@@ -185,12 +205,14 @@ def parse_args():
     parser.add_argument('--net', type=str, help='type of net', choices=['path', 'overlap'])
     parser.add_argument('--im_w', type=str, help='image_width', default=64)
     parser.add_argument('--im_h', type=str, help='image_heigh', default=64)
+    parser.add_argument('--augment_stroke_width', action='store_true')
     parser.add_argument('--conv_hidden_num', type=int, default=64,
                      choices=[64, 128, 256])
     parser.add_argument('--repeat_num', type=int, default=20,
                      choices=[16, 20, 32])
     parser.add_argument('--loss', type=str, default='l1',
                      choices=['l1','l2', 'bce'])
+    parser.add_argument("--augment_gamma", action='store_true')
     options = parser.parse_args()
 
     return options
