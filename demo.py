@@ -512,19 +512,21 @@ def vectorize(pm):
     print('%s: %s, accuracy computed, avg.: %.3f' % (datetime.now(), file_name, acc_avg))
 
     # 4. save image
-    save_label_img(labels, unique_labels, num_labels, acc_avg, pm)
+    save_mask_map(labels, unique_labels, num_labels, pm)
+    virualize_map(labels, unique_labels, num_labels, pm)
+    # save_label_img(labels, unique_labels, num_labels, acc_avg, pm)
     duration = time.time() - start_time
     pm.duration_vect = duration
     
     # write result
     pm.duration += duration        
     print('%s: %s, done (%.3f sec)' % (datetime.now(), file_name, pm.duration))
-    stat_file_path = os.path.join(pm.model_dir, file_name + '_stat.txt')
-    with open(stat_file_path, 'w') as f:
-        f.write('%s %d %d %.3f %.3f %.3f %.3f %.3f %.3f\n' % (
-            file_path, num_labels, -1, acc_avg,
-            pm.duration_pred, pm.duration_ov, pm.duration_map, 
-            pm.duration_vect, pm.duration))
+    # stat_file_path = os.path.join(pm.model_dir, file_name + '_stat.txt')
+    # with open(stat_file_path, 'w') as f:
+    #     f.write('%s %d %d %.3f %.3f %.3f %.3f %.3f %.3f\n' % (
+    #         file_path, num_labels, -1, acc_avg,
+    #         pm.duration_pred, pm.duration_ov, pm.duration_map, 
+    #         pm.duration_vect, pm.duration))
 
 def label(file_name, pm):
     start_time = time.time()
@@ -672,6 +674,20 @@ def compute_accuracy(labels, pm):
     # print('avg: %.2f' % np.average(acc_list))
     return acc_list
 
+def save_mask_map(labels, unique_labels, num_labels, pm):
+    #labels: l
+    file_path = os.path.basename(pm.file_path)
+    file_name = os.path.splitext(file_path)[0]
+    label_map = np.zeros([pm.height, pm.width, 2], dtype=np.uint8)
+    num_path_pixels = len(pm.path_pixels[0])
+    for j, l in enumerate(labels):
+        if j >= num_path_pixels:
+            j = pm.dup_rev_dict[j]
+            label_map[pm.path_pixels[0][j], pm.path_pixels[1][j], 1] = l + 1
+        else:
+            label_map[pm.path_pixels[0][j], pm.path_pixels[1][j], 0] = l + 1
+    with open(os.path.join(pm.model_dir, f'{file_name}_label.npy'), 'wb') as f:
+        np.savez_compressed(f, label_map)
 def save_label_img(labels, unique_labels, num_labels, acc_avg, pm):
     sys_name = platform.system()
 
@@ -744,20 +760,33 @@ def save_label_img(labels, unique_labels, num_labels, acc_avg, pm):
         os.remove(i_label_map_path)
         os.remove(i_label_map_svg)
 
-    # set opacity 0.5 to see overlaps
-    with open(target_svg_path, 'r') as f:
-        target_svg = f.read()
-    
-    insert_pos = target_svg.find('<g')
-    target_svg = target_svg[:insert_pos] + '<g fill-opacity="0.5">' + target_svg[insert_pos:]
-    insert_pos = target_svg.find('</svg>')
-    target_svg = target_svg[:insert_pos] + '</g>' + target_svg[insert_pos:]
-    
-    with open(target_svg_path, 'w') as f:
-        f.write(target_svg)
-
     label_map_path = os.path.join(pm.model_dir, '%s_%.2f_%.2f_%d_%d_%.2f.png' % (
         file_name, pm.sigma_neighbor, pm.sigma_predict, num_labels, -1, acc_avg))
+    imageio.imwrite(label_map_path, label_map)
+def virualize_map(labels, unique_labels, num_labels, pm):
+    file_path = os.path.basename(pm.file_path)
+    file_name = os.path.splitext(file_path)[0]
+    num_path_pixels = len(pm.path_pixels[0])
+    # gt_labels = pm.num_paths
+
+    cmap = plt.get_cmap('jet')    
+    cnorm = colors.Normalize(vmin=0, vmax=num_labels-1)
+    cscalarmap = cmx.ScalarMappable(norm=cnorm, cmap=cmap)
+    
+    label_map = np.ones([pm.height, pm.width, 3], dtype=np.float)
+    for color_id, i in enumerate(unique_labels):
+        i_label_list = np.nonzero(labels == i)
+
+        # handle duplicated pixels
+        for j, i_label in enumerate(i_label_list[0]):
+            if i_label >= num_path_pixels:
+                i_label_list[0][j] = pm.dup_rev_dict[i_label]
+
+        color = np.asarray(cscalarmap.to_rgba(color_id))
+        label_map[pm.path_pixels[0][i_label_list],pm.path_pixels[1][i_label_list]] = color[:3]
+
+    label_map_path = os.path.join(pm.model_dir, '%s_out.png' % (
+        file_name))
     imageio.imwrite(label_map_path, label_map)
 
     # label_map_t /= np.amax(label_map_t)
@@ -784,7 +813,7 @@ def parse_args():
     parser.add_argument('--height', type=int, default=64)
     parser.add_argument('--model_dir', type=str, default='/content/debug')
 
-    parser.add_argument('--im', required=True, dest='im',
+    parser.add_argument('--im', required=False, dest='im',
                         help='name of validation folder', type=str)
     parser.add_argument('--seed', type=int, default=256)
     parser.add_argument('--conv_hidden_num', type=int, default=64,
@@ -802,8 +831,9 @@ if __name__ == '__main__':
         device = 'cuda'
     tester = Tester(config, device)
     import pandas as pd
-    paths = pd.read_csv('/content/images/all/train_small.csv')
+    paths = pd.read_csv('/content/images/all/train_small.csv')['path']
+    # paths = ['0x691c/ETL8G_010828.png']
     root_dir = '/content/images/all'
-    for p in paths['path']:
+    for p in paths:
         print(p)
         tester.test(os.path.join(root_dir, p))
